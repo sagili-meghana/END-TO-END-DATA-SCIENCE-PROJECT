@@ -1,0 +1,64 @@
+
+from fastapi import FastAPI, HTTPException
+from pydantic import BaseModel
+import pandas as pd
+from sklearn.preprocessing import StandardScaler
+from sklearn.cluster import KMeans
+import joblib
+import numpy as np
+import os
+
+app = FastAPI(title="Customer Segmentation API with Your Data")
+
+MODEL_PATH = "kmeans_model.pkl"
+SCALER_PATH = "scaler.pkl"
+CSV_PATH = "your_customers.csv"  # Place your CSV file in the same folder
+
+# Step 1: Check if model & scaler exist, else train
+if not (os.path.exists(MODEL_PATH) and os.path.exists(SCALER_PATH)):
+    if not os.path.exists(CSV_PATH):
+        raise FileNotFoundError(f"CSV file '{CSV_PATH}' not found! Please add your data file.")
+
+    # Load your CSV data
+    df = pd.read_csv(CSV_PATH)
+
+    # Check required columns exist
+    required_cols = ['Annual Income (k$)', 'Spending Score (1-100)']
+    for col in required_cols:
+        if col not in df.columns:
+            raise ValueError(f"Required column '{col}' not found in CSV!")
+
+    # Select features
+    X = df[required_cols]
+
+    # Scale features
+    scaler = StandardScaler()
+    X_scaled = scaler.fit_transform(X)
+
+    # Train KMeans model (adjust n_clusters as needed)
+    model = KMeans(n_clusters=5, random_state=42)
+    model.fit(X_scaled)
+
+    # Save model and scaler
+    joblib.dump(model, MODEL_PATH)
+    joblib.dump(scaler, SCALER_PATH)
+
+# Step 2: Load the saved model and scaler
+model = joblib.load(MODEL_PATH)
+scaler = joblib.load(SCALER_PATH)
+
+# Step 3: Define input schema
+class CustomerData(BaseModel):
+    annual_income: float
+    spending_score: float
+
+# Step 4: Create prediction endpoint
+@app.post("/predict_segment")
+def predict_segment(data: CustomerData):
+    try:
+        input_array = np.array([[data.annual_income, data.spending_score]])
+        scaled = scaler.transform(input_array)
+        segment = model.predict(scaled)[0]
+        return {"customer_segment": int(segment)}
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
